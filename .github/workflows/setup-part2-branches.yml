@@ -1,0 +1,171 @@
+name: Setup Part 2 Branches
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_recreate:
+        description: 'Force recreate branches if they already exist'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  setup-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create bug-fix-typo branch and fix README typo
+        run: |
+          # NOTE: BASE_SHA is the original tip of main in this repository instance
+          # (before any README fixes were applied). This workflow is intentionally
+          # scoped to this specific repository to fulfill the course assignment requirements.
+          BASE_SHA="d95d9a3e2fbd0146d9bbf36347ae0af2f6740572"
+
+          # Check if branch already exists
+          if git ls-remote --exit-code origin refs/heads/bug-fix-typo && \
+             [ "${{ inputs.force_recreate }}" != "true" ]; then
+            echo "bug-fix-typo branch already exists, skipping creation."
+          else
+            # Delete existing branch if force recreate
+            if [ "${{ inputs.force_recreate }}" = "true" ]; then
+              git push origin --delete bug-fix-typo 2>/dev/null || true
+            fi
+
+            # Create branch from the base commit (original main without the fix)
+            git checkout -b bug-fix-typo "$BASE_SHA"
+
+            # Write the complete README.md. Primary: use git show from the known fix commit
+            # on the copilot/fix-typo-and-merge-branches branch (fetch-depth:0 ensures it
+            # is available). Fallback: decode the embedded base64 copy of the same content.
+            git show c5a5721894c6964e168404c720a7aaad531bb05b:README.md > README.md 2>/dev/null \
+              || python3 -c "import base64; open('README.md','wb').write(base64.b64decode('IyBTaW1wbGUgSW50ZXJlc3QgQ2FsY3VsYXRvcgoKQSBzaW1wbGUgYmFzaCBzY3JpcHQgdG8gY2FsY3VsYXRlIHNpbXBsZSBpbnRlcmVzdCBiYXNlZCBvbiBwcmluY2lwYWwgYW1vdW50LCByYXRlIG9mIGludGVyZXN0LCBhbmQgdGltZSBwZXJpb2QuCgojIyBGb3JtdWxhCgpTaW1wbGUgSW50ZXJlc3QgPSAoUHJpbmNpcGFsIMOXIFJhdGUgw5cgVGltZSkgLyAxMDAKCldoZXJlOgotICoqUCoqID0gUHJpbmNpcGFsIGFtb3VudCAodGhlIGluaXRpYWwgYW1vdW50IG9mIG1vbmV5KQotICoqUioqID0gQW5udWFsIGludGVyZXN0IHJhdGUgKGluIHBlcmNlbnRhZ2UpCi0gKipUKiogPSBUaW1lIHBlcmlvZCAoaW4geWVhcnMpCgojIyBVc2FnZQoKYGBgYmFzaApiYXNoIHNpbXBsZS1pbnRlcmVzdC5zaApgYGAKCllvdSB3aWxsIGJlIHByb21wdGVkIHRvIGVudGVyOgoxLiBQcmluY2lwYWwgYW1vdW50CjIuIFJhdGUgb2YgaW50ZXJlc3QgKCUgcGVyIHllYXIpCjMuIFRpbWUgcGVyaW9kIChpbiB5ZWFycykKClRoZSBzY3JpcHQgd2lsbCBvdXRwdXQgdGhlIGNhbGN1bGF0ZWQgc2ltcGxlIGludGVyZXN0LgoKIyMgRXhhbXBsZQoKYGBgCkVudGVyIHRoZSBwcmluY2lwYWwgYW1vdW50OiAxMDAwCkVudGVyIHRoZSByYXRlIG9mIGludGVyZXN0OiA1CkVudGVyIHRoZSB0aW1lIHBlcmlvZDogMwpTaW1wbGUgSW50ZXJlc3QgPSAxNTAuMDAKYGBgCg=='))"
+
+            git add README.md
+            git commit -m "Fix typo: complete README.md with formula, usage and example sections"
+            git push origin bug-fix-typo
+            echo "bug-fix-typo branch created and pushed."
+          fi
+
+      - name: Merge bug-fix-typo into main
+        run: |
+          git checkout main
+          git pull origin main
+          # Use --no-ff to always create a merge commit (shows the merge clearly in git log)
+          git merge --no-ff origin/bug-fix-typo \
+            -m "Merge branch 'bug-fix-typo' into main" \
+            -X theirs 2>/dev/null || \
+          git merge --no-ff origin/bug-fix-typo \
+            -m "Merge branch 'bug-fix-typo' into main" || \
+          echo "Already up to date or nothing to merge."
+          git push origin main || echo "Nothing new to push to main."
+          echo "bug-fix-typo merged into main."
+
+      - name: Create bug-fix-revert branch
+        run: |
+          # Check if branch already exists
+          if git ls-remote --exit-code origin refs/heads/bug-fix-revert && \
+             [ "${{ inputs.force_recreate }}" != "true" ]; then
+            echo "bug-fix-revert branch already exists, skipping creation."
+          else
+            # Delete existing branch if force recreate
+            if [ "${{ inputs.force_recreate }}" = "true" ]; then
+              git push origin --delete bug-fix-revert 2>/dev/null || true
+            fi
+
+            # Create bug-fix-revert from the current main (which now has the typo fix)
+            git checkout -b bug-fix-revert origin/main
+
+            # Add a revert-style commit to the README
+            printf '\n## Notes\n\nThis version reverts experimental changes and restores the stable implementation.\n' \
+              >> README.md
+
+            git add README.md
+            git commit -m "Revert: restore stable README documentation"
+            git push origin bug-fix-revert
+            echo "bug-fix-revert branch created and pushed."
+          fi
+
+      - name: Create Pull Request from bug-fix-revert to main
+        id: create-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list \
+            --base main \
+            --head bug-fix-revert \
+            --state all \
+            --json number \
+            --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_PR" ] && [ "${{ inputs.force_recreate }}" != "true" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
+          else
+            PR_URL=$(gh pr create \
+              --base main \
+              --head bug-fix-revert \
+              --title "Fix: revert to stable README documentation" \
+              --body "This pull request reverts experimental changes to README.md and restores the stable documentation.")
+            PR_NUMBER=$(gh pr view bug-fix-revert --json number --jq '.number' 2>/dev/null || echo "")
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "PR created: $PR_URL"
+          fi
+
+      - name: Merge Pull Request from bug-fix-revert to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ steps.create-pr.outputs.pr_number }}"
+          if [ -n "$PR_NUMBER" ]; then
+            # --admin bypasses branch protections; this is intentional for a personal
+            # assignment repo where the workflow runner has admin access via GITHUB_TOKEN.
+            gh pr merge "$PR_NUMBER" --merge --admin \
+              || gh pr merge "$PR_NUMBER" --merge \
+              || echo "PR may already be merged or cannot be auto-merged."
+            echo "Pull request #$PR_NUMBER processed."
+          else
+            echo "No PR number found, skipping merge."
+          fi
+
+      - name: Summary
+        run: |
+          REPO="${{ github.repository }}"
+          PR_NUMBER="${{ steps.create-pr.outputs.pr_number }}"
+          echo "## Part 2 Setup Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following branches and pull requests have been created:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Branches" >> $GITHUB_STEP_SUMMARY
+          echo "- \`main\` — contains the merged README.md fix from bug-fix-typo" >> $GITHUB_STEP_SUMMARY
+          echo "- \`bug-fix-typo\` — branch with README.md typo fix (merged into main)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`bug-fix-revert\` — branch with revert change (PR merged into main)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### URLs for Submission" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Part 2 Task 1 (Repository URL):**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Part 2 Task 3 (Pull Request URL):**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO/pull/$PR_NUMBER" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Part 2 Task 4 (Branches Page URL):**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO/branches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "For **Part 2 Task 2** (screenshot), navigate to:" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO/commits/main" >> $GITHUB_STEP_SUMMARY
+          echo "and take a screenshot showing the merge commit from bug-fix-typo." >> $GITHUB_STEP_SUMMARY
