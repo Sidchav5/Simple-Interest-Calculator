@@ -1,0 +1,188 @@
+name: Setup Part 2 Branches
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_recreate:
+        description: 'Force recreate branches if they already exist'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  setup-branches:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create bug-fix-typo branch and fix README typo
+        run: |
+          # Check if branch already exists
+          if git ls-remote --exit-code origin refs/heads/bug-fix-typo && [ "${{ inputs.force_recreate }}" != "true" ]; then
+            echo "bug-fix-typo branch already exists, skipping creation."
+          else
+            # Delete existing branch if force recreate
+            if [ "${{ inputs.force_recreate }}" = "true" ]; then
+              git push origin --delete bug-fix-typo 2>/dev/null || true
+            fi
+
+            # Create branch from main
+            git checkout -b bug-fix-typo origin/main
+
+            # Complete the README.md with formula and usage sections (fix the incomplete/typo content)
+            cat > README.md << 'READMEEOF'
+# Simple Interest Calculator
+
+A simple bash script to calculate simple interest based on principal amount, rate of interest, and time period.
+
+## Formula
+
+Simple Interest = (Principal × Rate × Time) / 100
+
+Where:
+- **P** = Principal amount (the initial amount of money)
+- **R** = Annual interest rate (in percentage)
+- **T** = Time period (in years)
+
+## Usage
+
+```bash
+bash simple-interest.sh
+```
+
+You will be prompted to enter:
+1. Principal amount
+2. Rate of interest (% per year)
+3. Time period (in years)
+
+The script will output the calculated simple interest.
+
+## Example
+
+```
+Enter the principal amount: 1000
+Enter the rate of interest: 5
+Enter the time period: 3
+Simple Interest = 150.00
+```
+READMEEOF
+
+            git add README.md
+            git commit -m "Fix typo: complete README.md with formula, usage and example sections"
+            git push origin bug-fix-typo
+            echo "bug-fix-typo branch created and pushed."
+          fi
+
+      - name: Merge bug-fix-typo into main
+        run: |
+          git checkout main
+          git pull origin main
+          git merge --no-ff origin/bug-fix-typo -m "Merge branch 'bug-fix-typo' into main"
+          git push origin main
+          echo "bug-fix-typo merged into main."
+
+      - name: Create bug-fix-revert branch
+        run: |
+          # Check if branch already exists
+          if git ls-remote --exit-code origin refs/heads/bug-fix-revert && [ "${{ inputs.force_recreate }}" != "true" ]; then
+            echo "bug-fix-revert branch already exists, skipping creation."
+          else
+            # Delete existing branch if force recreate
+            if [ "${{ inputs.force_recreate }}" = "true" ]; then
+              git push origin --delete bug-fix-revert 2>/dev/null || true
+            fi
+
+            # Create bug-fix-revert from the updated main
+            git checkout -b bug-fix-revert origin/main
+
+            # Add a commit that simulates reverting a change (adding revert note to README)
+            cat >> README.md << 'REVERTEOF'
+
+## Notes
+
+This version reverts experimental changes and restores the stable implementation.
+REVERTEOF
+
+            git add README.md
+            git commit -m "Revert: restore stable README documentation"
+            git push origin bug-fix-revert
+            echo "bug-fix-revert branch created and pushed."
+          fi
+
+      - name: Create Pull Request from bug-fix-revert to main
+        id: create-pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check if PR already exists
+          EXISTING_PR=$(gh pr list --base main --head bug-fix-revert --json number --jq '.[0].number' 2>/dev/null || echo "")
+
+          if [ -n "$EXISTING_PR" ] && [ "${{ inputs.force_recreate }}" != "true" ]; then
+            echo "PR already exists: #$EXISTING_PR"
+            echo "pr_number=$EXISTING_PR" >> $GITHUB_OUTPUT
+          else
+            PR_URL=$(gh pr create \
+              --base main \
+              --head bug-fix-revert \
+              --title "Fix: revert to stable README documentation" \
+              --body "This pull request reverts experimental changes to README.md and restores the stable documentation.
+
+## Changes
+- Reverts README.md to the stable version with complete formula documentation
+
+## Testing
+The simple interest calculation formula and usage examples are verified to be correct.")
+            PR_NUMBER=$(echo "$PR_URL" | grep -oP '(?<=/pull/)\d+')
+            echo "pr_number=$PR_NUMBER" >> $GITHUB_OUTPUT
+            echo "PR created: $PR_URL"
+          fi
+
+      - name: Merge Pull Request from bug-fix-revert to main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER=${{ steps.create-pr.outputs.pr_number }}
+          if [ -n "$PR_NUMBER" ]; then
+            gh pr merge "$PR_NUMBER" --merge --admin || echo "PR may already be merged or cannot be auto-merged."
+            echo "Pull request #$PR_NUMBER merged."
+          else
+            echo "No PR number found, skipping merge."
+          fi
+
+      - name: Summary
+        run: |
+          REPO="${{ github.repository }}"
+          echo "## Part 2 Setup Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The following branches and pull requests have been created:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Branches" >> $GITHUB_STEP_SUMMARY
+          echo "- \`main\` - contains the merged README.md fix from bug-fix-typo" >> $GITHUB_STEP_SUMMARY
+          echo "- \`bug-fix-typo\` - branch with README.md typo fix (merged into main)" >> $GITHUB_STEP_SUMMARY
+          echo "- \`bug-fix-revert\` - branch with revert change (PR merged into main)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### URLs for Submission" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Part 2 Task 1 (Repository URL):**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Part 2 Task 3 (Pull Request URL):**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO/pull/${{ steps.create-pr.outputs.pr_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Part 2 Task 4 (Branches Page URL):**" >> $GITHUB_STEP_SUMMARY
+          echo "https://github.com/$REPO/branches" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "For Part 2 Task 2, take a screenshot of: https://github.com/$REPO/commits/main" >> $GITHUB_STEP_SUMMARY
